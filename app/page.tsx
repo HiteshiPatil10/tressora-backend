@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { StoreContext, type Page } from "@/lib/store"
 import { AppSidebar } from "@/components/app-sidebar"
 import { DashboardPage } from "@/components/pages/dashboard"
@@ -55,6 +55,10 @@ export default function Home() {
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [showNotifications, setShowNotifications] = useState(false)
+  const [today, setToday] = useState("")
+
+  
+
 
   const ActivePage = pageComponents[currentPage]
 
@@ -252,15 +256,16 @@ export default function Home() {
 
           {/* Footer */}
           <footer className="border-t border-border bg-card/50 px-4 py-3 lg:px-6">
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-muted-foreground">
-                Tressora Salon Management v1.0
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Today: {new Date().toLocaleDateString("en-IN", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}
-              </p>
-            </div>
+          <div className="flex items-center justify-between">
+          <p className="text-xs text-muted-foreground">
+            Tressora Salon Management v1.0
+          </p>
+          <p className="text-xs text-muted-foreground">
+              Today: {today}
+          </p>
+          </div>
           </footer>
+
         </main>
 
         {/* Click-away to close dropdowns */}

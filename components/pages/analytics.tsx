@@ -1,9 +1,10 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { supabase } from "@/lib/supabaseClient"
+
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import {
   Select,
   SelectContent,
@@ -12,16 +13,15 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+
 import {
-  weeklyRevenue,
-  monthlyRevenue,
-  yearlyRevenue,
-  serviceRevenue,
-  peakHours,
-  barbers,
-  appointments,
-} from "@/lib/data"
-import { TrendingUp, DollarSign, BarChart3, Clock, Users } from "lucide-react"
+  TrendingUp,
+  DollarSign,
+  BarChart3,
+  Clock,
+  Users,
+} from "lucide-react"
+
 import {
   BarChart,
   Bar,
@@ -30,8 +30,6 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  LineChart,
-  Line,
   AreaChart,
   Area,
   PieChart,
@@ -39,275 +37,337 @@ import {
   Cell,
 } from "recharts"
 
-const COLORS = ["hsl(25, 55%, 45%)", "hsl(35, 60%, 55%)", "hsl(15, 40%, 35%)", "hsl(40, 50%, 60%)", "hsl(20, 70%, 50%)"]
+const COLORS = [
+  "hsl(25, 55%, 45%)",
+  "hsl(35, 60%, 55%)",
+  "hsl(15, 40%, 35%)",
+  "hsl(40, 50%, 60%)",
+  "hsl(20, 70%, 50%)",
+]
 
 export function AnalyticsPage() {
+
   const [period, setPeriod] = useState("weekly")
   const [barberFilter, setBarberFilter] = useState("all")
 
-  const revenueData = period === "weekly" ? weeklyRevenue : period === "monthly" ? monthlyRevenue : yearlyRevenue
-  const xKey = period === "weekly" ? "day" : period === "monthly" ? "month" : "year"
+  const [appointments, setAppointments] = useState<any[]>([])
+  const [barbers, setBarbers] = useState<any[]>([])
 
-  // Barber-specific analytics
+  useEffect(() => {
+    fetchData()
+  }, [])
+
+  async function fetchData() {
+
+    const { data: appts } = await supabase
+      .from("appointments")
+      .select("*")
+
+    const { data: barbersData } = await supabase
+      .from("barbers")
+      .select("*")
+
+    setAppointments(appts || [])
+    setBarbers(barbersData || [])
+  }
+
+  /* ---------------- Revenue Aggregation ---------------- */
+
+  function groupRevenue() {
+
+    const map: Record<string, { revenue: number; bookings: number }> = {}
+
+    appointments.forEach((a) => {
+
+      const date = new Date(a.date)
+
+      let key = ""
+
+      if (period === "weekly") {
+        key = date.toLocaleDateString("en-IN", { weekday: "short" })
+      }
+      else if (period === "monthly") {
+        key = date.toLocaleDateString("en-IN", { month: "short" })
+      }
+      else {
+        key = date.getFullYear().toString()
+      }
+
+      if (!map[key]) {
+        map[key] = { revenue: 0, bookings: 0 }
+      }
+
+      map[key].revenue += a.amount || 0
+      map[key].bookings += 1
+    })
+
+    return Object.entries(map).map(([k, v]) => ({
+      label: k,
+      ...v,
+    }))
+  }
+
+  const revenueData = groupRevenue()
+
+  /* ---------------- Service Revenue ---------------- */
+
+  const serviceMap: Record<string, number> = {}
+
+  appointments.forEach((a) => {
+    const s = a.service_name || "Other"
+    if (!serviceMap[s]) serviceMap[s] = 0
+    serviceMap[s] += a.amount || 0
+  })
+
+  const serviceRevenue = Object.entries(serviceMap).map(
+    ([name, revenue]) => ({ name, revenue })
+  )
+
+  /* ---------------- Peak Hours ---------------- */
+
+  const hourMap: Record<string, number> = {}
+
+  appointments.forEach((a) => {
+    if (!a.time) return
+    const hour = a.time.slice(0, 2) + ":00"
+    if (!hourMap[hour]) hourMap[hour] = 0
+    hourMap[hour]++
+  })
+
+  const peakHours = Object.entries(hourMap).map(
+    ([hour, bookings]) => ({ hour, bookings })
+  )
+
+  /* ---------------- Barber Stats ---------------- */
+
   const barberStats = barbers.map((b) => {
-    const barberAppts = appointments.filter((a) => a.barberId === b.id)
-    const completed = barberAppts.filter((a) => a.status === "completed")
-    const totalRev = completed.reduce((s, a) => s + a.amount, 0)
+
+    const barberAppts = appointments.filter(
+      (a) => a.barber_id === b.id
+    )
+
+    const revenue = barberAppts.reduce(
+      (s, a) => s + (a.amount || 0),
+      0
+    )
+
     return {
-      name: b.name.split(" ")[0],
-      fullName: b.name,
       id: b.id,
+      fullName: b.name,
       totalClients: barberAppts.length,
-      completedClients: completed.length,
-      revenue: totalRev + b.revenueGenerated,
-      avgPerClient: barberAppts.length > 0 ? Math.round((totalRev + b.revenueGenerated) / barberAppts.length) : 0,
+      revenue,
     }
   })
 
-  const filteredBarberStats = barberFilter === "all"
-    ? barberStats
-    : barberStats.filter((b) => b.id === barberFilter)
+  const filteredBarberStats =
+    barberFilter === "all"
+      ? barberStats
+      : barberStats.filter((b) => b.id === barberFilter)
 
-  // Top stats
-  const totalRevenue = period === "weekly"
-    ? weeklyRevenue.reduce((s, d) => s + d.revenue, 0)
-    : period === "monthly"
-    ? monthlyRevenue.reduce((s, d) => s + d.revenue, 0)
-    : yearlyRevenue.reduce((s, d) => s + d.revenue, 0)
+  /* ---------------- KPIs ---------------- */
 
-  const totalBookings = period === "weekly"
-    ? weeklyRevenue.reduce((s, d) => s + d.bookings, 0)
-    : period === "monthly"
-    ? monthlyRevenue.reduce((s, d) => s + d.bookings, 0)
-    : yearlyRevenue.reduce((s, d) => s + d.bookings, 0)
+  const totalRevenue = appointments.reduce(
+    (s, a) => s + (a.amount || 0),
+    0
+  )
+
+  const totalBookings = appointments.length
+
+  /* ---------------- UI ---------------- */
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+
+      {/* Header */}
+      <div className="flex justify-between items-center">
         <div>
-          <h1 className="font-serif text-3xl font-bold text-foreground">Revenue & Analytics</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <h1 className="text-3xl font-bold">
+            Revenue & Analytics
+          </h1>
+          <p className="text-sm text-muted-foreground">
             Deep insights into your salon performance
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Select value={barberFilter} onValueChange={setBarberFilter}>
-            <SelectTrigger className="w-[160px] border-border bg-card text-sm">
-              <Users className="mr-2 h-3.5 w-3.5 text-muted-foreground" />
-              <SelectValue placeholder="Filter barber" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Barbers</SelectItem>
-              {barbers.map((b) => (
-                <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+
+        <Select
+          value={barberFilter}
+          onValueChange={setBarberFilter}
+        >
+          <SelectTrigger className="w-[160px]">
+            <Users className="mr-2 h-4 w-4" />
+            <SelectValue placeholder="Filter barber" />
+          </SelectTrigger>
+
+          <SelectContent>
+            <SelectItem value="all">All</SelectItem>
+            {barbers.map((b) => (
+              <SelectItem key={b.id} value={b.id}>
+                {b.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
-      {/* Period Tabs */}
-      <Tabs value={period} onValueChange={setPeriod}>
-        <TabsList className="bg-secondary/70">
-          <TabsTrigger value="weekly" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">Weekly</TabsTrigger>
-          <TabsTrigger value="monthly" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">Monthly</TabsTrigger>
-          <TabsTrigger value="yearly" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">Yearly</TabsTrigger>
-        </TabsList>
+      {/* KPI */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
 
-        <TabsContent value={period} className="mt-4">
-          {/* Summary Cards */}
-          <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <Card className="border-border/60 bg-card shadow-sm">
-              <CardContent className="flex items-center gap-3 p-4">
-                <div className="rounded-xl bg-primary/10 p-2.5">
-                  <DollarSign className="h-5 w-5 text-primary" />
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Total Revenue</p>
-                  <p className="text-xl font-bold text-foreground">₹{totalRevenue.toLocaleString()}</p>
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="border-border/60 bg-card shadow-sm">
-              <CardContent className="flex items-center gap-3 p-4">
-                <div className="rounded-xl bg-primary/10 p-2.5">
-                  <BarChart3 className="h-5 w-5 text-primary" />
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Total Bookings</p>
-                  <p className="text-xl font-bold text-foreground">{totalBookings.toLocaleString()}</p>
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="border-border/60 bg-card shadow-sm">
-              <CardContent className="flex items-center gap-3 p-4">
-                <div className="rounded-xl bg-primary/10 p-2.5">
-                  <TrendingUp className="h-5 w-5 text-emerald-600" />
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Avg. per Booking</p>
-                  <p className="text-xl font-bold text-foreground">₹{totalBookings > 0 ? Math.round(totalRevenue / totalBookings).toLocaleString() : 0}</p>
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="border-border/60 bg-card shadow-sm">
-              <CardContent className="flex items-center gap-3 p-4">
-                <div className="rounded-xl bg-primary/10 p-2.5">
-                  <Clock className="h-5 w-5 text-amber-600" />
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Peak Hour</p>
-                  <p className="text-xl font-bold text-foreground">4 PM</p>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+        <Card>
+          <CardContent className="p-4 flex gap-3 items-center">
+            <DollarSign />
+            <div>
+              <p className="text-xs">Revenue</p>
+              <p className="font-bold">
+                ₹{totalRevenue.toLocaleString()}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
 
-          {/* Charts */}
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-            {/* Revenue Trend */}
-            <Card className="border-border/60 bg-card shadow-sm">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base font-semibold">Revenue Trend</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={280}>
-                  <AreaChart data={revenueData}>
-                    <defs>
-                      <linearGradient id="revGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="hsl(25, 45%, 30%)" stopOpacity={0.3} />
-                        <stop offset="95%" stopColor="hsl(25, 45%, 30%)" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(30, 15%, 88%)" />
-                    <XAxis dataKey={xKey} tick={{ fill: "hsl(25, 10%, 45%)", fontSize: 12 }} />
-                    <YAxis tick={{ fill: "hsl(25, 10%, 45%)", fontSize: 12 }} />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: "hsl(35, 30%, 98%)",
-                        border: "1px solid hsl(30, 15%, 88%)",
-                        borderRadius: "12px",
-                      }}
-                      formatter={(value: number) => [`₹${value.toLocaleString()}`, "Revenue"]}
-                    />
-                    <Area type="monotone" dataKey="revenue" stroke="hsl(25, 45%, 30%)" strokeWidth={2.5} fill="url(#revGradient)" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
+        <Card>
+          <CardContent className="p-4 flex gap-3 items-center">
+            <BarChart3 />
+            <div>
+              <p className="text-xs">Bookings</p>
+              <p className="font-bold">
+                {totalBookings}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
 
-            {/* Bookings Trend */}
-            <Card className="border-border/60 bg-card shadow-sm">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base font-semibold">Bookings Trend</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={280}>
-                  <BarChart data={revenueData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(30, 15%, 88%)" />
-                    <XAxis dataKey={xKey} tick={{ fill: "hsl(25, 10%, 45%)", fontSize: 12 }} />
-                    <YAxis tick={{ fill: "hsl(25, 10%, 45%)", fontSize: 12 }} />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: "hsl(35, 30%, 98%)",
-                        border: "1px solid hsl(30, 15%, 88%)",
-                        borderRadius: "12px",
-                      }}
-                    />
-                    <Bar dataKey="bookings" fill="hsl(28, 50%, 42%)" radius={[6, 6, 0, 0]} name="Bookings" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
-      </Tabs>
+        <Card>
+          <CardContent className="p-4 flex gap-3 items-center">
+            <TrendingUp />
+            <div>
+              <p className="text-xs">Avg / Booking</p>
+              <p className="font-bold">
+                ₹{totalBookings ? Math.round(totalRevenue / totalBookings) : 0}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
 
-      {/* Bottom Row */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        {/* Peak Hours */}
-        <Card className="border-border/60 bg-card shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base font-semibold">Peak Booking Hours</CardTitle>
+        <Card>
+          <CardContent className="p-4 flex gap-3 items-center">
+            <Clock />
+            <div>
+              <p className="text-xs">Peak Slots</p>
+              <p className="font-bold">
+                {peakHours.sort((a,b)=>b.bookings-a.bookings)[0]?.hour || "-"}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
+      </div>
+
+      {/* Charts */}
+      <div className="grid lg:grid-cols-2 gap-6">
+
+        {/* Revenue Trend */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Revenue Trend</CardTitle>
           </CardHeader>
+
           <CardContent>
-            <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={peakHours} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(30, 15%, 88%)" />
-                <XAxis type="number" tick={{ fill: "hsl(25, 10%, 45%)", fontSize: 11 }} />
-                <YAxis dataKey="hour" type="category" tick={{ fill: "hsl(25, 10%, 45%)", fontSize: 11 }} width={50} />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: "hsl(35, 30%, 98%)",
-                    border: "1px solid hsl(30, 15%, 88%)",
-                    borderRadius: "12px",
-                  }}
-                />
-                <Bar dataKey="bookings" fill="hsl(25, 45%, 30%)" radius={[0, 6, 6, 0]} name="Bookings" />
+            <ResponsiveContainer width="100%" height={260}>
+              <AreaChart data={revenueData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="label" />
+                <YAxis />
+                <Tooltip />
+                <Area dataKey="revenue" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+
+        {/* Bookings */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Bookings</CardTitle>
+          </CardHeader>
+
+          <CardContent>
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={revenueData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="label" />
+                <YAxis />
+                <Tooltip />
+                <Bar dataKey="bookings" />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>
 
-        {/* Service Revenue Breakdown */}
-        <Card className="border-border/60 bg-card shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base font-semibold">Top Services</CardTitle>
+      </div>
+
+      {/* Bottom */}
+      <div className="grid lg:grid-cols-3 gap-6">
+
+        {/* Peak Hours */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Peak Hours</CardTitle>
           </CardHeader>
+
           <CardContent>
-            <ResponsiveContainer width="100%" height={200}>
-              <PieChart>
-                <Pie data={serviceRevenue} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={3} dataKey="revenue">
-                  {serviceRevenue.map((entry, index) => (
-                    <Cell key={entry.name} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: "hsl(35, 30%, 98%)",
-                    border: "1px solid hsl(30, 15%, 88%)",
-                    borderRadius: "12px",
-                  }}
-                  formatter={(value: number) => [`₹${value.toLocaleString()}`, "Revenue"]}
-                />
-              </PieChart>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={peakHours} layout="vertical">
+                <XAxis type="number" />
+                <YAxis dataKey="hour" type="category" />
+                <Tooltip />
+                <Bar dataKey="bookings" />
+              </BarChart>
             </ResponsiveContainer>
-            <div className="mt-2 flex flex-wrap justify-center gap-2">
-              {serviceRevenue.map((s, i) => (
-                <div key={s.name} className="flex items-center gap-1.5 text-xs">
-                  <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: COLORS[i] }} />
-                  <span className="text-muted-foreground">{s.name}</span>
-                </div>
-              ))}
-            </div>
           </CardContent>
         </Card>
 
-        {/* Barber Revenue Table */}
-        <Card className="border-border/60 bg-card shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base font-semibold">Barber Performance</CardTitle>
+        {/* Service Pie */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Top Services</CardTitle>
           </CardHeader>
+
           <CardContent>
-            <div className="flex flex-col gap-3">
-              {filteredBarberStats.map((b, i) => (
-                <div key={b.id} className="flex items-center justify-between rounded-xl border border-border/40 bg-background/50 px-3 py-2.5">
-                  <div className="flex items-center gap-2">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
-                      {i + 1}
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-foreground">{b.fullName}</p>
-                      <p className="text-xs text-muted-foreground">{b.totalClients} clients</p>
-                    </div>
-                  </div>
-                  <span className="text-sm font-bold text-foreground">₹{b.revenue.toLocaleString()}</span>
-                </div>
-              ))}
-            </div>
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie data={serviceRevenue} dataKey="revenue">
+                  {serviceRevenue.map((_, i) => (
+                    <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                  ))}
+                </Pie>
+              </PieChart>
+            </ResponsiveContainer>
           </CardContent>
         </Card>
+
+        {/* Barber Stats */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Barber Performance</CardTitle>
+          </CardHeader>
+
+          <CardContent className="flex flex-col gap-3">
+            {filteredBarberStats.map((b) => (
+              <div
+                key={b.id}
+                className="flex justify-between border rounded-lg px-3 py-2"
+              >
+                <span>{b.fullName}</span>
+                <span className="font-bold">
+                  ₹{b.revenue.toLocaleString()}
+                </span>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
       </div>
+
     </div>
   )
 }
